@@ -7,6 +7,15 @@ use rocket::{
 };
 use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct Song {
+    uuid: String,
+    key: String,
+    song: String,
+    cover: String
+}
+
 #[derive(FromRow, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct QueueSong {
@@ -51,6 +60,31 @@ struct Usage {
     vs: String,
     playertype: Option<String>,
     access_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct Telemetry {
+    uuid: String,
+    key: String,
+    tst: i32,
+    twitch_id: String,
+    twitch_name: String,
+    vs: String,
+    playertype: String,
+}
+
+impl Song {
+    pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
+        sqlx::query("REPLACE INTO song_data (UUID, song, cover) VALUES (?, ?, ?)")
+            .bind(song.uuid)
+            .bind(song.song)
+            .bind(song.cover)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl QueueSong {
@@ -142,6 +176,20 @@ impl Usage {
 
         Ok(())
     }
+
+    pub async fn set_telemetry(telemetry: Telemetry, pool: &Pool<MySql>,) -> sqlx::Result<()> {
+        sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(telemetry.uuid)
+            .bind(telemetry.tst)
+            .bind(telemetry.twitch_id)
+            .bind(telemetry.twitch_name)
+            .bind(telemetry.vs)
+            .bind(telemetry.playertype)
+            .bind(telemetry.key)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
 }
 
 async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>) -> Result<(), Status> {
@@ -207,6 +255,20 @@ async fn clear_queue(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song:
     Ok(())
 }
 
+#[post("/telemetry.php", format = "json", data = "<telemetry>")]
+async fn set_telemetry(pool: &State<Pool<MySql>>, telemetry: Json<Telemetry>) -> Result<(), Status> {
+    let data = telemetry.into_inner();
+    verify_access_key(&data.uuid, &data.key, pool).await?;
+    Usage::set_telemetry(data, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
+}
+
+#[post("/song.php", format = "json", data = "<song>")]
+async fn set_song(pool: &State<Pool<MySql>>, song: Json<Song>) -> Result<(), Status> {
+    let data = song.into_inner();
+    verify_access_key(&data.uuid, &data.key, pool).await?;
+    Song::set_song(data, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
+}
+
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     let database_url = env::var("DATABASE_URL")
@@ -228,7 +290,7 @@ async fn main() -> Result<(), rocket::Error> {
 
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue])
+        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, set_song])
         .manage(pool)
         .launch()
         .await?;
