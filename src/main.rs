@@ -3,7 +3,7 @@ use std::env;
 use rocket::{
     get, post, routes,
     serde::{json::Json, Deserialize, Serialize},
-    State, futures::future::ok, http::Status, response::status::Unauthorized,
+    State, patch, delete, http::Status,
 };
 use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 
@@ -21,6 +21,27 @@ struct QueueSong {
     Albumcover: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct QueuePostPayload {
+    queueItem: QueueSong
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct QueueUpdatePayload {
+    uuid: String,
+    key: String,
+    queueid: i32
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct QueueClearPayload {
+    uuid: String,
+    key: String
+}
+
 #[derive(FromRow)]
 struct Usage {
     UUID: String,
@@ -33,9 +54,9 @@ struct Usage {
 }
 
 impl QueueSong {
-    pub async fn get_queue(id: String, pool: &Pool<MySql>) -> Result<Vec<QueueSong>, sqlx::Error> {
+    pub async fn get_queue(id: String, pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
         println!("Getting queue for uuid: {id}");
-        let queue = sqlx::query_as::<MySql, QueueSong>(
+        let queue = sqlx::query_as::<MySql, Self>(
             "SELECT * FROM songify_queue WHERE Uuid = ? AND Played = 0;",
         )
         .bind(id)
@@ -73,6 +94,25 @@ impl QueueSong {
             Albumcover: inserted_song.get(8),
         })
     }
+
+    pub async fn remove_from_queue(uuid: String, queueid: i32, pool: &Pool<MySql>) -> sqlx::Result<()> {
+        sqlx::query("UPDATE songify_queue SET Played = 1 WHERE Uuid = ? AND Queueid = ?")
+            .bind(uuid)
+            .bind(queueid)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn clear_queue(uuid: String, pool: &Pool<MySql>) -> sqlx::Result<()> {
+        sqlx::query("UPDATE songify_queue SET Played = 1 WHERE Uuid = ?")
+            .bind(uuid)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl Usage {
@@ -80,8 +120,8 @@ impl Usage {
         id: String,
         pool: &Pool<MySql>,
     ) -> Result<Option<String>, sqlx::Error> {
-        let usage: Usage =
-            sqlx::query_as::<MySql, Usage>("SELECT * FROM songify_usage WHERE UUID = ?")
+        let usage =
+            sqlx::query_as::<MySql, Self>("SELECT * FROM songify_usage WHERE UUID = ?")
                 .bind(id)
                 .fetch_one(pool)
                 .await?;
@@ -104,17 +144,17 @@ impl Usage {
     }
 }
 
-async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>) -> Result<(), Unauthorized<()>> {
-    let access_key = Usage::get_access_key(uuid.to_string(), pool).await.unwrap();
+async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>) -> Result<(), Status> {
+    let access_key = Usage::get_access_key(uuid.to_string(), pool).await.map_err(|_| Status::InternalServerError)?;
+
     match access_key {
         Some(key) => {
             if key != api_key {
-                let status = rocket::response::status::Unauthorized::<()>(None);
-                return Err(status);
+                return Err(Status::Unauthorized);
             }
         }
         None => {
-            Usage::set_access_key(uuid.to_string(), api_key.to_string(), pool).await.unwrap();
+            Usage::set_access_key(uuid.to_string(), api_key.to_string(), pool).await.map_err(|_| Status::InternalServerError)?;
         }
     }
 
@@ -122,9 +162,8 @@ async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>)
 }
 
 #[get("/queue.php?<uuid>")]
-async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Json<Vec<QueueSong>> {
-    let queue = QueueSong::get_queue(uuid.to_string(), &pool).await.unwrap();
-    Json(queue)
+async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<QueueSong>>, Status> {
+    QueueSong::get_queue(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |queue| Ok(Json(queue)))
 }
 
 #[post("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
@@ -132,29 +171,64 @@ async fn add_to_queue(
     pool: &State<Pool<MySql>>,
     uuid: &str,
     api_key: &str,
-    song: Json<QueueSong>,
-) -> Result<Json<QueueSong>, Unauthorized<()>> {
+    song: Json<QueuePostPayload>,
+) -> Result<Json<QueueSong>, Status> {
     verify_access_key(uuid, api_key, pool).await?;
 
-    let queue_song = QueueSong::add_to_queue(uuid.to_string(), song.into_inner(), pool)
-        .await
-        .unwrap();
-
-    Ok(Json(queue_song))
+    (QueueSong::add_to_queue(uuid.to_string(), song.into_inner().queueItem, pool)
+        .await).map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
 }
+
+#[patch("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
+async fn set_queue_song_played(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song: Json<QueueUpdatePayload>) -> Result<(), Status> {
+    verify_access_key(uuid, api_key, pool).await?;
+
+    match QueueSong::remove_from_queue(uuid.to_string(), song.into_inner().queueid, pool).await {
+        Ok(_) => (),
+        Err(_) => {
+            return Err(Status::InternalServerError);
+        }
+    }
+
+    Ok(())
+}
+
+#[delete("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
+async fn clear_queue(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song: Json<QueueClearPayload>) -> Result<(), Status> {
+    verify_access_key(uuid, api_key, pool).await?;
+
+    match QueueSong::clear_queue(uuid.to_string(), pool).await {
+        Ok(_) => (),
+        Err(_) => {
+            return Err(Status::InternalServerError);
+        }
+    }
+
+    Ok(())
+}
+
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
-    let database_url = env::var("DATABASE_URL").unwrap_or(
-        "mysql://songify:e3c5b05667f27e1db18dd8608faf0212@root.cyklan.de:3306/songify".to_string(),
-    );
+    let database_url = env::var("DATABASE_URL")
+    .map_or_else(|_| {
+        println!("No database url found");
+        std::process::exit(1);
+    }, |url| url);
+    
+
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
-        .unwrap();
+        .map_or_else(|_| {
+            println!("Could not connect to database");
+            std::process::exit(1);
+        }, |pool| pool);
+
+
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue])
+        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue])
         .manage(pool)
         .launch()
         .await?;
