@@ -217,8 +217,8 @@ async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>)
 }
 
 #[get("/getsong.php?<uuid>")]
-async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Song>, Status> {
-    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
+async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
+    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.song))
 }
 
 #[get("/queue.php?<uuid>")]
