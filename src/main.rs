@@ -7,7 +7,7 @@ use rocket::{
 };
 use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, FromRow)]
 #[serde(crate = "rocket::serde")]
 struct Song {
     uuid: String,
@@ -39,8 +39,6 @@ struct QueuePostPayload {
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct QueueUpdatePayload {
-    uuid: String,
-    key: String,
     queueid: i32
 }
 
@@ -84,6 +82,15 @@ impl Song {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn get_song(id: String, pool: &Pool<MySql>) -> Result<Self, sqlx::Error> {
+        let song = sqlx::query_as::<MySql, Self>("SELECT * FROM song_data WHERE UUID = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(song)
     }
 }
 
@@ -209,6 +216,11 @@ async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>)
     Ok(())
 }
 
+#[get("/getsong.php?<uuid>")]
+async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Song>, Status> {
+    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
+}
+
 #[get("/queue.php?<uuid>")]
 async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<QueueSong>>, Status> {
     QueueSong::get_queue(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |queue| Ok(Json(queue)))
@@ -290,7 +302,7 @@ async fn main() -> Result<(), rocket::Error> {
 
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, set_song])
+        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song])
         .manage(pool)
         .launch()
         .await?;
