@@ -106,7 +106,7 @@ impl History {
 
 impl Song {
     pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
-        sqlx::query("REPLACE INTO song_data (UUID, song, ) VALUES (?, ?, ?)")
+        sqlx::query("REPLACE INTO song_data (UUID, song, cover_url) VALUES (?, ?, ?)")
             .bind(song.uuid)
             .bind(song.song)
             .bind(song.cover)
@@ -128,7 +128,6 @@ impl Song {
 
 impl QueueSong {
     pub async fn get_queue(id: String, pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
-        println!("Getting queue for uuid: {id}");
         let queue = sqlx::query_as::<MySql, Self>(
             "SELECT * FROM songify_queue WHERE Uuid = ? AND Played = 0;",
         )
@@ -289,9 +288,9 @@ async fn set_queue_song_played(pool: &State<Pool<MySql>>, uuid: &str, api_key: &
     Ok(())
 }
 
-#[delete("/queue.php?<uuid>", format = "json", data = "<song>")]
-async fn clear_queue(pool: &State<Pool<MySql>>, uuid: &str, song: Json<QueueClearPayload>) -> Result<(), Status> {
-    verify_access_key(uuid, &song.key, pool).await?;
+#[delete("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
+async fn clear_queue(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song: Json<QueueClearPayload>) -> Result<(), Status> {
+    verify_access_key(uuid, api_key, pool).await?;
 
     match QueueSong::clear_queue(uuid.to_string(), pool).await {
         Ok(_) => (),
