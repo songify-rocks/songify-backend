@@ -50,7 +50,8 @@ struct SongPayload {
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct QueueUpdatePayload {
-    queueid: i32
+    queueid: i32,
+    uuid: String
 }
 
 #[derive(Deserialize)]
@@ -275,11 +276,12 @@ async fn add_to_queue(
         .await).map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
 }
 
-#[patch("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
-async fn set_queue_song_played(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song: Json<QueueUpdatePayload>) -> Result<(), Status> {
-    verify_access_key(uuid, api_key, pool).await?;
+#[patch("/queue.php?<api_key>", format = "json", data = "<song>")]
+async fn set_queue_song_played(pool: &State<Pool<MySql>>, api_key: &str, song: Json<QueueUpdatePayload>) -> Result<(), Status> {
+    let song = song.into_inner();
+    verify_access_key(&song.uuid, api_key, pool).await?;
 
-    match QueueSong::remove_from_queue(uuid.to_string(), song.into_inner().queueid, pool).await {
+    match QueueSong::remove_from_queue(song.uuid, song.queueid, pool).await {
         Ok(_) => (),
         Err(_) => {
             return Err(Status::InternalServerError);
