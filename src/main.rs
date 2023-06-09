@@ -3,7 +3,7 @@ use std::env;
 use rocket::{
     get, post, routes,
     serde::{json::Json, Deserialize, Serialize},
-    State, patch, delete, http::Status,
+    State, patch, delete, http::Status, fairing::{Fairing, Info},
 };
 use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 
@@ -91,6 +91,23 @@ struct History {
     song: String,
     key: String,
     tst: i32,
+}
+
+struct CORS;
+#[rocket::async_trait]
+impl Fairing for CORS {
+    fn info(&self) -> Info {
+        Info {
+            name: "CORS",
+            kind: rocket::fairing::Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, _request: &'r rocket::Request<'_>, response: &mut rocket::Response<'r>) {
+        response.set_header(rocket::http::Header::new("Access-Control-Allow-Origin", "*"));
+        response.set_header(rocket::http::Header::new("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PATCH, DELETE"));
+        response.set_header(rocket::http::Header::new("Access-Control-Allow-Headers", "Content-Type"));
+    }
 }
 
 impl History {
@@ -361,6 +378,7 @@ async fn main() -> Result<(), rocket::Error> {
     rocket::build()
         .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song, get_cover, set_history])
         .manage(pool)
+        .attach(CORS)
         .launch()
         .await?;
 
