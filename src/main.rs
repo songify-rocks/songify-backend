@@ -38,6 +38,16 @@ struct QueuePostPayload {
 
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
+struct SongPayload {
+    uuid: String,
+    key: String,
+    song: String,
+    cover: Option<String>
+}
+
+
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
 struct QueueUpdatePayload {
     queueid: i32
 }
@@ -278,11 +288,21 @@ async fn set_telemetry(pool: &State<Pool<MySql>>, telemetry: Json<Telemetry>) ->
     Usage::set_telemetry(data, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
-#[post("/song.php", format = "json", data = "<song>")]
-async fn set_song(pool: &State<Pool<MySql>>, song: Json<Song>) -> Result<(), Status> {
+#[post("/song.php?<api_key>", format = "json", data = "<song>")]
+async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPayload>) -> Result<(), Status> {
     let data = song.into_inner();
-    verify_access_key(&data.uuid, &data.key, pool).await?;
-    Song::set_song(data, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
+
+    let cover = data.cover.map_or_else(String::new, |cover| cover);
+
+    let song: Song = Song {
+        uuid: data.uuid,
+        song: data.song,
+        cover,
+        key: api_key,
+    };
+
+    verify_access_key(&song.uuid, &data.key, pool).await?;
+    Song::set_song(song, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
 #[rocket::main]
