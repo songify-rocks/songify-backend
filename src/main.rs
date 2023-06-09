@@ -220,6 +220,10 @@ async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>)
 async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
     Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.song))
 }
+#[get("/getcover.php?<uuid>")]
+async fn get_cover(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
+    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.cover))
+}
 
 #[get("/queue.php?<uuid>")]
 async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<QueueSong>>, Status> {
@@ -302,7 +306,7 @@ async fn main() -> Result<(), rocket::Error> {
 
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song])
+        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song, get_cover])
         .manage(pool)
         .launch()
         .await?;
