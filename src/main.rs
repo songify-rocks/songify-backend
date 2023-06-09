@@ -20,7 +20,7 @@ struct Song {
 #[serde(crate = "rocket::serde")]
 struct QueueSong {
     Queueid: Option<i32>,
-    Uuid: String,
+    Uuid: Option<String>,
     Trackid: String,
     Artist: String,
     Title: String,
