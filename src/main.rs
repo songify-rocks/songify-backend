@@ -82,9 +82,29 @@ struct Telemetry {
     playertype: String,
 }
 
+struct History {
+    id: String,
+    song: String,
+    key: String,
+    tst: String,
+}
+
+impl History {
+    pub async fn set_history(history: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
+        sqlx::query("INSERT INTO songify_history (UUID, song, tst) VALUES (?, ?, ?)")
+            .bind(history.id)
+            .bind(history.song)
+            .bind(history.tst)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+}
+
 impl Song {
     pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
-        sqlx::query("REPLACE INTO song_data (UUID, song, cover) VALUES (?, ?, ?)")
+        sqlx::query("REPLACE INTO song_data (UUID, song, cover_url) VALUES (?, ?, ?)")
             .bind(song.uuid)
             .bind(song.song)
             .bind(song.cover)
@@ -305,6 +325,14 @@ async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPay
     Song::set_song(song, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
+#[get("/history.php?<key>&<id>&<tst>&<song>")]
+async fn set_history(pool: &State<Pool<MySql>>, key: String, id: String, tst: String, song: String) -> Result<(), Status> {
+    verify_access_key(&id, &key, pool).await?;
+    let history= History { id, song, key, tst };
+
+    History::set_history(history, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
+}
+
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
     let database_url = env::var("DATABASE_URL")
@@ -326,7 +354,7 @@ async fn main() -> Result<(), rocket::Error> {
 
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song, get_cover])
+        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song, get_cover, set_history])
         .manage(pool)
         .launch()
         .await?;
