@@ -82,11 +82,13 @@ struct Telemetry {
     playertype: String,
 }
 
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
 struct History {
     id: String,
     song: String,
     key: String,
-    tst: String,
+    tst: i32,
 }
 
 impl History {
@@ -104,7 +106,7 @@ impl History {
 
 impl Song {
     pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
-        sqlx::query("REPLACE INTO song_data (UUID, song, cover_url) VALUES (?, ?, ?)")
+        sqlx::query("REPLACE INTO song_data (UUID, song, ) VALUES (?, ?, ?)")
             .bind(song.uuid)
             .bind(song.song)
             .bind(song.cover)
@@ -325,10 +327,10 @@ async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPay
     Song::set_song(song, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
-#[get("/history.php?<key>&<id>&<tst>&<song>")]
-async fn set_history(pool: &State<Pool<MySql>>, key: String, id: String, tst: String, song: String) -> Result<(), Status> {
-    verify_access_key(&id, &key, pool).await?;
-    let history= History { id, song, key, tst };
+#[post("/history.php?<api_key>", format = "json", data = "<history>")]
+async fn set_history(pool: &State<Pool<MySql>>, api_key: String, history: Json<History>) -> Result<(), Status> {
+    let history = history.into_inner();
+    verify_access_key(&history.id, &api_key, pool).await?;
 
     History::set_history(history, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
