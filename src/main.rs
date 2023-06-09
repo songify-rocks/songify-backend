@@ -33,7 +33,8 @@ struct QueueSong {
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct QueuePostPayload {
-    queueItem: QueueSong
+    queueItem: QueueSong,
+    uuid: String
 }
 
 #[derive(Deserialize)]
@@ -261,16 +262,16 @@ async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<Que
     QueueSong::get_queue(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |queue| Ok(Json(queue)))
 }
 
-#[post("/queue.php?<uuid>&<api_key>", format = "json", data = "<song>")]
+#[post("/queue.php?<api_key>", format = "json", data = "<song>")]
 async fn add_to_queue(
     pool: &State<Pool<MySql>>,
-    uuid: &str,
     api_key: &str,
     song: Json<QueuePostPayload>,
 ) -> Result<Json<QueueSong>, Status> {
-    verify_access_key(uuid, api_key, pool).await?;
+    let song = song.into_inner();
+    verify_access_key(&song.uuid, api_key, pool).await?;
 
-    (QueueSong::add_to_queue(uuid.to_string(), song.into_inner().queueItem, pool)
+    (QueueSong::add_to_queue(song.uuid, song.queueItem, pool)
         .await).map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
 }
 
