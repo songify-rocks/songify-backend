@@ -288,11 +288,12 @@ async fn set_queue_song_played(pool: &State<Pool<MySql>>, uuid: &str, api_key: &
     Ok(())
 }
 
-#[post("/queue_delete.php?<uuid>&<api_key>", format = "json", data = "<song>")]
-async fn clear_queue(pool: &State<Pool<MySql>>, uuid: &str, api_key: &str, song: Json<QueueClearPayload>) -> Result<(), Status> {
-    verify_access_key(uuid, api_key, pool).await?;
+#[post("/queue_delete.php?<api_key>", format = "json", data = "<queue>")]
+async fn clear_queue(pool: &State<Pool<MySql>>, api_key: &str, queue: Json<QueueClearPayload>) -> Result<(), Status> {
+    let queue = queue.into_inner();
+    verify_access_key(&queue.uuid, api_key, pool).await?;
 
-    match QueueSong::clear_queue(uuid.to_string(), pool).await {
+    match QueueSong::clear_queue(queue.uuid, pool).await {
         Ok(_) => (),
         Err(_) => {
             return Err(Status::InternalServerError);
