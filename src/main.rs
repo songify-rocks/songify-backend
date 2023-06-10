@@ -76,7 +76,7 @@ struct Usage {
 struct Telemetry {
     uuid: String,
     key: String,
-    tst: String,
+    tst: i32,
     twitch_id: String,
     twitch_name: String,
     vs: String,
@@ -274,7 +274,7 @@ impl Usage {
     pub async fn set_telemetry(telemetry: Telemetry, pool: &Pool<MySql>,) -> sqlx::Result<()> {
         sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(telemetry.uuid)
-            .bind(telemetry.tst)
+            .bind(telemetry.tst.to_string())
             .bind(telemetry.twitch_id)
             .bind(telemetry.twitch_name)
             .bind(telemetry.vs)
