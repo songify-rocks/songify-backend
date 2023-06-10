@@ -5,7 +5,7 @@ use rocket::{
     serde::{json::Json, Deserialize, Serialize},
     State, patch, http::Status, fairing::{Fairing, Info},
 };
-use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
+use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool, Row};
 
 #[derive(Deserialize, Serialize, FromRow)]
 #[serde(crate = "rocket::serde")]
@@ -76,7 +76,7 @@ struct Usage {
 struct Telemetry {
     uuid: String,
     key: String,
-    tst: i32,
+    tst: String,
     twitch_id: String,
     twitch_name: String,
     vs: String,
@@ -243,12 +243,18 @@ impl Usage {
         pool: &Pool<MySql>,
     ) -> Result<Option<String>, sqlx::Error> {
         let usage =
-            sqlx::query_as::<MySql, Self>("SELECT * FROM songify_usage WHERE UUID = ?")
+            sqlx::query("SELECT access_key FROM songify_usage WHERE UUID = ?")
                 .bind(id)
                 .fetch_one(pool)
-                .await?;
+                .await;
 
-        Ok(usage.access_key)
+        match usage {
+            Ok(usage) => Ok(Some(usage.get(0))),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => {
+                Err(e)
+            },
+        }
     }
 
     pub async fn set_access_key(
@@ -266,7 +272,7 @@ impl Usage {
     }
 
     pub async fn set_telemetry(telemetry: Telemetry, pool: &Pool<MySql>,) -> sqlx::Result<()> {
-        sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        let result = sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(telemetry.uuid)
             .bind(telemetry.tst)
             .bind(telemetry.twitch_id)
@@ -275,8 +281,15 @@ impl Usage {
             .bind(telemetry.playertype)
             .bind(telemetry.key)
             .execute(pool)
-            .await?;
-        Ok(())
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                println!("Error: {e}" );
+                Err(e)
+            }
+        }
     }
 }
 
