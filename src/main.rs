@@ -94,7 +94,7 @@ struct HistoryPayload {
 #[derive(Deserialize, Serialize, FromRow)]
 #[serde(crate = "rocket::serde")]
 struct History {
-    id: String,
+    uuid: String,
     song: String,
     tst: i32
 }
@@ -133,8 +133,8 @@ impl Fairing for Cors {
 
 impl History {
     pub async fn set_history(history: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
-        sqlx::query("INSERT INTO songify_history (UUID, song, tst) VALUES (?, ?, ?)")
-            .bind(history.id)
+        sqlx::query("INSERT INTO songify_history (uuid, song, tst) VALUES (?, ?, ?)")
+            .bind(history.uuid)
             .bind(history.song)
             .bind(history.tst)
             .execute(pool)
@@ -384,7 +384,7 @@ async fn set_history(pool: &State<Pool<MySql>>, api_key: String, payload: Json<H
     verify_access_key(&payload.id, &api_key, pool).await?;
 
     let history = History {
-        id: payload.id,
+        uuid: payload.id,
         song: payload.song,
         tst: payload.tst,
     };
