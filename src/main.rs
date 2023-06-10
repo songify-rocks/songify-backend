@@ -3,7 +3,7 @@ use std::env;
 use rocket::{
     get, post, routes,
     serde::{json::Json, Deserialize, Serialize},
-    State, patch, delete, http::Status, fairing::{Fairing, Info},
+    State, patch, http::Status, fairing::{Fairing, Info},
 };
 use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 
@@ -11,9 +11,8 @@ use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool};
 #[serde(crate = "rocket::serde")]
 struct Song {
     uuid: String,
-    key: String,
     song: String,
-    cover: String
+    cover_url: String
 }
 
 #[derive(FromRow, Serialize, Deserialize)]
@@ -86,16 +85,38 @@ struct Telemetry {
 
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
-struct History {
+struct HistoryPayload {
     id: String,
     song: String,
     key: String,
     tst: i32,
 }
+#[derive(Deserialize, Serialize, FromRow)]
+#[serde(crate = "rocket::serde")]
+struct History {
+    id: String,
+    song: String,
+    tst: i32
+}
 
-struct CORS;
+struct Cors;
+
+fn get_custom_uuids(uuid: &str) -> &str {
+    match uuid {
+         "inzaniity" => "43efb299-2504-4365-8ac6-a301f0d7c7aa",
+         "thejaydizzle" => "5d07c1d6-6dcc-4185-a6bd-284fe0480b79",
+         "sluckz" => "f6d9a390-7d48-4da6-a177-c378a7a33c1e",
+         "vigilsc" => "2580091a-aec1-44be-afbd-274523c1b3d2",
+         "itsbustre" => "c90b6e0e-6706-4036-bf25-327b2d981082",
+         "rocketstarrl" => "de8a9f85-2919-474c-9845-6534ec54dc7f",
+         "preheet" => "4aa39d0a-1bf6-4705-bfb5-512dd8afc1e2",
+         "highitsky" => "630e6596-a833-42d9-a905-7a5bf1a75d0e",
+        _ => uuid
+    }
+}
+
 #[rocket::async_trait]
-impl Fairing for CORS {
+impl Fairing for Cors {
     fn info(&self) -> Info {
         Info {
             name: "CORS",
@@ -121,6 +142,16 @@ impl History {
 
         Ok(())
     }
+
+    pub async fn get_history(id: String, pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
+        let uuid = get_custom_uuids(&id);
+        let history = sqlx::query_as::<MySql, Self>("SELECT * FROM songify_history WHERE uuid = ? ORDER BY tst DESC")
+            .bind(uuid)
+            .fetch_all(pool)
+            .await?;
+
+        Ok(history)
+    }
 }
 
 impl Song {
@@ -128,7 +159,7 @@ impl Song {
         sqlx::query("REPLACE INTO song_data (UUID, song, cover_url) VALUES (?, ?, ?)")
             .bind(song.uuid)
             .bind(song.song)
-            .bind(song.cover)
+            .bind(song.cover_url)
             .execute(pool)
             .await?;
 
@@ -266,21 +297,22 @@ async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>)
     Ok(())
 }
 
-#[get("/getsong.php?<uuid>")]
+#[get("/getsong?<uuid>")]
 async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
     Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.song))
 }
-#[get("/getcover.php?<uuid>")]
+
+#[get("/getcover?<uuid>")]
 async fn get_cover(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
-    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.cover))
+    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.cover_url))
 }
 
-#[get("/queue.php?<uuid>")]
+#[get("/queue?<uuid>")]
 async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<QueueSong>>, Status> {
     QueueSong::get_queue(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |queue| Ok(Json(queue)))
 }
 
-#[post("/queue.php?<api_key>", format = "json", data = "<song>")]
+#[post("/queue?<api_key>", format = "json", data = "<song>")]
 async fn add_to_queue(
     pool: &State<Pool<MySql>>,
     api_key: &str,
@@ -293,7 +325,7 @@ async fn add_to_queue(
         .await).map_or(Err(Status::InternalServerError), |song| Ok(Json(song)))
 }
 
-#[patch("/queue.php?<api_key>", format = "json", data = "<song>")]
+#[patch("/queue?<api_key>", format = "json", data = "<song>")]
 async fn set_queue_song_played(pool: &State<Pool<MySql>>, api_key: &str, song: Json<QueueUpdatePayload>) -> Result<(), Status> {
     let song = song.into_inner();
     verify_access_key(&song.uuid, api_key, pool).await?;
@@ -308,7 +340,7 @@ async fn set_queue_song_played(pool: &State<Pool<MySql>>, api_key: &str, song: J
     Ok(())
 }
 
-#[post("/queue_delete.php?<api_key>", format = "json", data = "<queue>")]
+#[post("/queue_delete?<api_key>", format = "json", data = "<queue>")]
 async fn clear_queue(pool: &State<Pool<MySql>>, api_key: &str, queue: Json<QueueClearPayload>) -> Result<(), Status> {
     let queue = queue.into_inner();
     verify_access_key(&queue.uuid, api_key, pool).await?;
@@ -323,14 +355,14 @@ async fn clear_queue(pool: &State<Pool<MySql>>, api_key: &str, queue: Json<Queue
     Ok(())
 }
 
-#[post("/telemetry.php", format = "json", data = "<telemetry>")]
+#[post("/telemetry", format = "json", data = "<telemetry>")]
 async fn set_telemetry(pool: &State<Pool<MySql>>, telemetry: Json<Telemetry>) -> Result<(), Status> {
     let data = telemetry.into_inner();
     verify_access_key(&data.uuid, &data.key, pool).await?;
     Usage::set_telemetry(data, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
-#[post("/song.php?<api_key>", format = "json", data = "<song>")]
+#[post("/song?<api_key>", format = "json", data = "<song>")]
 async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPayload>) -> Result<(), Status> {
     let data = song.into_inner();
 
@@ -339,21 +371,32 @@ async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPay
     let song: Song = Song {
         uuid: data.uuid,
         song: data.song,
-        cover,
-        key: api_key,
+        cover_url: cover,
     };
 
     verify_access_key(&song.uuid, &data.key, pool).await?;
     Song::set_song(song, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
 
-#[post("/history.php?<api_key>", format = "json", data = "<history>")]
-async fn set_history(pool: &State<Pool<MySql>>, api_key: String, history: Json<History>) -> Result<(), Status> {
-    let history = history.into_inner();
-    verify_access_key(&history.id, &api_key, pool).await?;
+#[post("/history?<api_key>", format = "json", data = "<payload>")]
+async fn set_history(pool: &State<Pool<MySql>>, api_key: String, payload: Json<HistoryPayload>) -> Result<(), Status> {
+    let payload = payload.into_inner();
+    verify_access_key(&payload.id, &api_key, pool).await?;
+
+    let history = History {
+        id: payload.id,
+        song: payload.song,
+        tst: payload.tst,
+    };
 
     History::set_history(history, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
+
+#[get("/history_data?<id>")]
+async fn get_history_data(pool: &State<Pool<MySql>>, id: String) -> Result<Json<Vec<History>>, Status> {
+    History::get_history(id, pool).await.map_or(Err(Status::InternalServerError), |history| Ok(Json(history)))
+}
+
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
@@ -376,9 +419,20 @@ async fn main() -> Result<(), rocket::Error> {
 
 
     rocket::build()
-        .mount("/v2", routes![get_queue, add_to_queue, set_queue_song_played, clear_queue, set_telemetry, get_song, set_song, get_cover, set_history])
+        .mount("/v2", routes![
+            get_queue, 
+            add_to_queue, 
+            set_queue_song_played, 
+            clear_queue, 
+            set_telemetry, 
+            get_song, 
+            set_song, 
+            get_cover, 
+            set_history, 
+            get_history_data
+        ])
         .manage(pool)
-        .attach(CORS)
+        .attach(Cors)
         .launch()
         .await?;
 
