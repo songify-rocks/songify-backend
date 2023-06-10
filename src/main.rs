@@ -272,7 +272,7 @@ impl Usage {
     }
 
     pub async fn set_telemetry(telemetry: Telemetry, pool: &Pool<MySql>,) -> sqlx::Result<()> {
-        let result = sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("REPLACE INTO songify_usage (UUID, tst, twitch_id, twitch_name, vs, playertype, access_key) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(telemetry.uuid)
             .bind(telemetry.tst)
             .bind(telemetry.twitch_id)
@@ -281,15 +281,9 @@ impl Usage {
             .bind(telemetry.playertype)
             .bind(telemetry.key)
             .execute(pool)
-            .await;
+            .await?;
 
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                println!("Error: {e}" );
-                Err(e)
-            }
-        }
+        Ok(())
     }
 }
 
