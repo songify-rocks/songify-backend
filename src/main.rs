@@ -168,11 +168,15 @@ impl Song {
 
     pub async fn get_song(id: String, pool: &Pool<MySql>) -> Result<Self, sqlx::Error> {
         let song = sqlx::query_as::<MySql, Self>("SELECT * FROM song_data WHERE uuid = ?")
-            .bind(id)
+            .bind(&id)
             .fetch_one(pool)
-            .await?;
+            .await;
 
-        Ok(song)
+        song.map_or_else(|_| Ok(Self {
+                uuid: id,
+                song: "No song found".to_string(),
+                cover_url: String::new(),
+            }), Ok)
     }
 }
 
