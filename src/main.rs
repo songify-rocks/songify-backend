@@ -96,7 +96,7 @@ struct HistoryPayload {
 struct History {
     uuid: String,
     song: String,
-    tst: i32
+    tst: String,
 }
 
 struct Cors;
@@ -386,7 +386,7 @@ async fn set_history(pool: &State<Pool<MySql>>, api_key: String, payload: Json<H
     let history = History {
         uuid: payload.id,
         song: payload.song,
-        tst: payload.tst,
+        tst: payload.tst.to_string(),
     };
 
     History::set_history(history, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
