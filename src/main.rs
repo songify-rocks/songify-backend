@@ -289,6 +289,22 @@ impl Usage {
 
         Ok(())
     }
+
+    pub async fn get_twitch_name(id: String, pool: &Pool<MySql>) -> Result<Option<String>, sqlx::Error> {
+        let usage =
+            sqlx::query("SELECT twitch_name FROM songify_usage WHERE UUID = ?")
+                .bind(id)
+                .fetch_one(pool)
+                .await;
+
+        match usage {
+            Ok(usage) => Ok(Some(usage.get(0))),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => {
+                Err(e)
+            },
+        }
+    }
 }
 
 async fn verify_access_key(uuid: &str, api_key: &str, pool: &State<Pool<MySql>>) -> Result<(), Status> {
@@ -408,6 +424,14 @@ async fn get_history_data(pool: &State<Pool<MySql>>, id: String) -> Result<Json<
     History::get_history(id, pool).await.map_or(Err(Status::InternalServerError), |history| Ok(Json(history)))
 }
 
+#[get("/twitch_name?<id>")]
+async fn get_twitch_name(pool: &State<Pool<MySql>>, id: String) -> Result<String, Status> {
+    Usage::get_twitch_name(id, pool).await.map_or(Err(Status::InternalServerError), |name| Ok(match name {
+        Some(name) => name,
+        None => String::new(),
+    }))
+}
+
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {
@@ -440,7 +464,8 @@ async fn main() -> Result<(), rocket::Error> {
             set_song, 
             get_cover, 
             set_history, 
-            get_history_data
+            get_history_data,
+            get_twitch_name
         ])
         .manage(pool)
         .attach(Cors)
