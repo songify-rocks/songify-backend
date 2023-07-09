@@ -12,7 +12,8 @@ use sqlx::{mysql::MySqlPoolOptions, FromRow, MySql, Pool, Row};
 struct Song {
     uuid: String,
     song: String,
-    cover_url: String
+    cover_url: String,
+    song_id: Option<String>,
 }
 
 #[derive(FromRow, Serialize, Deserialize)]
@@ -42,7 +43,8 @@ struct SongPayload {
     uuid: String,
     key: String,
     song: String,
-    cover: Option<String>
+    cover: Option<String>,
+    song_id: Option<String>,
 }
 
 
@@ -156,12 +158,17 @@ impl History {
 
 impl Song {
     pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
-        sqlx::query("REPLACE INTO song_data (UUID, song, cover_url) VALUES (?, ?, ?)")
+        let result = sqlx::query("REPLACE INTO song_data (UUID, song, cover_url, song_id) VALUES (?, ?, ?, ?)")
             .bind(song.uuid)
             .bind(song.song)
             .bind(song.cover_url)
+            .bind(song.song_id)
             .execute(pool)
-            .await?;
+            .await;
+
+        if let Err(e) = result {
+            println!("Error: {}", e);
+        }
 
         Ok(())
     }
@@ -176,6 +183,7 @@ impl Song {
                 uuid: id,
                 song: "No song found".to_string(),
                 cover_url: String::new(),
+                song_id: None
             }), Ok)
     }
 }
@@ -399,6 +407,7 @@ async fn set_song(pool: &State<Pool<MySql>>, api_key: String, song: Json<SongPay
         uuid: data.uuid,
         song: data.song,
         cover_url: cover,
+        song_id: data.song_id,
     };
 
     verify_access_key(&song.uuid, &data.key, pool).await?;
