@@ -1,4 +1,5 @@
 use std::env;
+use rocket::form::FromForm;
 
 use rocket::{
     get,
@@ -126,19 +127,29 @@ struct History {
     tst: String,
 }
 
-#[derive(Deserialize, Serialize, FromRow)]
+#[derive(Serialize, Deserialize, FromRow)]
 #[serde(crate = "rocket::serde")]
-struct MotdMessage {
-    id: i32,
-    message_text: String,
-    severity: String,
-    created_at: String,
-    start_date: Option<String>,
-    end_date: Option<String>,
-    is_active: bool,
-    author: Option<String>,
+struct Motd {
+    Id: i32,
+    MessageText: String,
+    Severity: String,
+    CreatedAt: i64,
+    StartDate: Option<i64>,
+    EndDate: Option<i64>,
+    IsActive: bool,
+    Author: String,
 }
 
+#[derive(FromForm)]
+struct QueueParams {
+    uuid: Option<String>,
+    name: Option<String>,
+}
+
+pub enum QueueParam {
+    Id(String),
+    Name(String),
+}
 
 struct Cors;
 
@@ -208,20 +219,15 @@ impl History {
     }
 }
 
-impl MotdMessage {
-    pub async fn get_active_motd(pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
-        let motd = sqlx::query_as::<MySql, Self>(
-            "SELECT id, message_text, severity, created_at, start_date, end_date, is_active, author 
-             FROM MotdMessages 
-             WHERE is_active = TRUE 
-             AND (start_date IS NULL OR start_date <= NOW()) 
-             AND (end_date IS NULL OR end_date >= NOW())
-             ORDER BY created_at DESC"
-        )
-        .fetch_all(pool)
-        .await?;
+impl Motd {
+    pub async fn get_active_motds(pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
+        let motds = sqlx
+            ::query_as::<MySql, Self>(
+                "SELECT Id, MessageText, Severity, CreatedAt, StartDate, EndDate, IsActive, Author FROM MotdMessages WHERE IsActive = 1 ORDER BY CreatedAt DESC"
+            )
+            .fetch_all(pool).await?;
 
-        Ok(motd)
+        Ok(motds)
     }
 }
 
@@ -242,31 +248,80 @@ impl Song {
         Ok(())
     }
 
-    pub async fn get_song(id: String, pool: &Pool<MySql>) -> Result<Self, sqlx::Error> {
-        let song = sqlx
-            ::query_as::<MySql, Self>("SELECT * FROM song_data WHERE uuid = ?")
-            .bind(&id)
-            .fetch_one(pool).await;
+    pub async fn get_song(param: QueueParam, pool: &Pool<MySql>) -> Result<Self, sqlx::Error> {
+        // Capture the `id` or `name` before the match expression
+        let (id_or_name, query) = match param {
+            QueueParam::Id(id) =>
+                (
+                    id.clone(), // Clone the id for use later
+                    sqlx
+                        ::query_as::<MySql, Self>("SELECT * FROM song_data WHERE uuid = ?")
+                        .bind(id),
+                ),
+            QueueParam::Name(name) =>
+                (
+                    name.clone(), // Clone the name for use later
+                    sqlx
+                        ::query_as::<MySql, Self>(
+                            "SELECT sd.*
+                     FROM song_data sd
+                     JOIN (
+                         SELECT UUID
+                         FROM songify_usage
+                         WHERE LOWER(twitch_name) = LOWER(?)
+                         ORDER BY tst DESC
+                         LIMIT 1
+                     ) su ON sd.uuid = su.UUID;"
+                        )
+                        .bind(name),
+                ),
+        };
 
-        song.map_or_else(
-            |_|
+        let song_result = query.fetch_one(pool).await;
+
+        match song_result {
+            Ok(song) => Ok(song), // If a song is found, return it
+            Err(_) =>
                 Ok(Self {
-                    uuid: id,
+                    uuid: id_or_name, // Now you can use the captured id or name
                     song: "No song found".to_string(),
                     cover_url: String::new(),
                     song_id: None,
                 }),
-            Ok
-        )
+        }
     }
 }
 
 impl QueueSong {
-    pub async fn get_queue(id: String, pool: &Pool<MySql>) -> Result<Vec<Self>, sqlx::Error> {
-        let queue = sqlx
-            ::query_as::<MySql, Self>("SELECT * FROM songify_queue WHERE Uuid = ? AND Played = 0;")
-            .bind(id)
-            .fetch_all(pool).await?;
+    pub async fn get_queue(
+        param: QueueParam,
+        pool: &Pool<MySql>
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        let query = match param {
+            QueueParam::Id(id) => {
+                sqlx::query_as::<MySql, Self>(
+                    "SELECT * FROM songify_queue WHERE Uuid = ? AND Played = 0;"
+                ).bind(id)
+            }
+            QueueParam::Name(name) => {
+                sqlx::query_as::<MySql, Self>(
+                    "
+                SELECT sq.*
+                FROM songify_queue sq
+                JOIN (
+                    SELECT UUID
+                    FROM songify_usage
+                    WHERE LOWER(twitch_name) = LOWER(?)
+                    ORDER BY tst DESC
+                    LIMIT 1
+                ) su ON sq.Uuid = su.UUID
+                WHERE sq.played = 0
+                ORDER BY sq.Queueid ASC;"
+                ).bind(name)
+            }
+        };
+
+        let queue = query.fetch_all(pool).await?;
 
         Ok(queue)
     }
@@ -397,8 +452,6 @@ impl Usage {
     }
 }
 
-
-
 async fn verify_access_key(
     uuid: &str,
     api_key: &str,
@@ -426,25 +479,49 @@ async fn verify_access_key(
     Ok(())
 }
 
-#[get("/getsong?<uuid>")]
-async fn get_song(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
-    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song|
-        Ok(song.song)
-    )
+#[get("/getsong?<params..>")]
+async fn get_song(pool: &State<Pool<MySql>>, params: QueueParams) -> Result<String, Status> {
+    let param = if let Some(uuid) = params.uuid {
+        QueueParam::Id(uuid)
+    } else if let Some(name) = params.name {
+        QueueParam::Name(name)
+    } else {
+        return Err(Status::BadRequest);
+    };
+
+    Song::get_song(param, pool).await.map_or(Err(Status::InternalServerError), |song| Ok(song.song))
 }
 
-#[get("/getcover?<uuid>")]
-async fn get_cover(pool: &State<Pool<MySql>>, uuid: &str) -> Result<String, Status> {
-    Song::get_song(uuid.to_string(), pool).await.map_or(Err(Status::InternalServerError), |song|
+#[get("/getcover?<params..>")]
+async fn get_cover(pool: &State<Pool<MySql>>, params: QueueParams) -> Result<String, Status> {
+    let param = if let Some(uuid) = params.uuid {
+        QueueParam::Id(uuid)
+    } else if let Some(name) = params.name {
+        QueueParam::Name(name)
+    } else {
+        return Err(Status::BadRequest);
+    };
+
+    Song::get_song(param, pool).await.map_or(Err(Status::InternalServerError), |song|
         Ok(song.cover_url)
     )
 }
 
-#[get("/queue?<uuid>")]
-async fn get_queue(pool: &State<Pool<MySql>>, uuid: &str) -> Result<Json<Vec<QueueSong>>, Status> {
-    QueueSong::get_queue(uuid.to_string(), pool).await.map_or(
-        Err(Status::InternalServerError),
-        |queue| Ok(Json(queue))
+#[get("/queue?<params..>")]
+async fn get_queue(
+    pool: &State<Pool<MySql>>,
+    params: QueueParams
+) -> Result<Json<Vec<QueueSong>>, Status> {
+    let param = if let Some(uuid) = params.uuid {
+        QueueParam::Id(uuid)
+    } else if let Some(name) = params.name {
+        QueueParam::Name(name)
+    } else {
+        return Err(Status::BadRequest);
+    };
+
+    QueueSong::get_queue(param, pool).await.map_or(Err(Status::InternalServerError), |queue|
+        Ok(Json(queue))
     )
 }
 
@@ -551,13 +628,15 @@ async fn set_history(
 }
 
 #[get("/motd")]
-async fn get_motd(pool: &State<Pool<MySql>>) -> Result<Json<Vec<MotdMessage>>, Status> {
-    MotdMessage::get_active_motd(pool).await.map_or(
-        Err(Status::InternalServerError),
-        |motd| Ok(Json(motd))
-    )
+async fn motd(pool: &State<Pool<MySql>>) -> Result<Json<Vec<Motd>>, Status> {
+    match Motd::get_active_motds(pool).await {
+        Ok(motds) => Ok(Json(motds)),
+        Err(e) => {
+            eprintln!("Error fetching MOTD: {:?}", e); // Log the error
+            Err(Status::InternalServerError)
+        }
+    }
 }
-
 
 #[get("/history_data?<id>")]
 async fn get_history_data(
@@ -618,7 +697,7 @@ async fn main() -> Result<(), rocket::Error> {
                 set_history,
                 get_history_data,
                 get_twitch_name,
-                get_motd
+                motd
             ]
         )
         .manage(pool)
