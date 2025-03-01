@@ -18,8 +18,8 @@ use rocket::{
     http::Status,
     fairing::{ Fairing, Info },
 };
-use serde_json::Value; // Import Value from serde_json
-use serde_json::json; // Import the json! macro
+use serde_json::Value;  // Import Value from serde_json
+use serde_json::json;  // Import the json! macro
 
 use sqlx::{ mysql::MySqlPoolOptions, FromRow, MySql, Pool, Row };
 
@@ -51,10 +51,6 @@ struct Song {
     song: String,
     cover_url: String,
     song_id: Option<String>,
-    playertype: Option<String>,
-    artist: Option<String>,
-    title: Option<String>,
-    requester: Option<String>,
 }
 
 #[derive(FromRow, Serialize, Deserialize)]
@@ -86,10 +82,6 @@ struct SongPayload {
     song: String,
     cover: Option<String>,
     song_id: Option<String>,
-    playertype: Option<String>,
-    artist: Option<String>,
-    title: Option<String>,
-    requester: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -125,7 +117,7 @@ struct Telemetry {
     tst: i32,
     twitch_id: String,
     twitch_name: String,
-    vs: Option<String>,
+    vs: String,
     playertype: String,
 }
 
@@ -263,28 +255,18 @@ impl Motd {
 impl Song {
     pub async fn set_song(song: Self, pool: &Pool<MySql>) -> sqlx::Result<()> {
         let result = sqlx
-            ::query(
-                "REPLACE INTO song_data 
-            (UUID, song, cover_url, song_id, playertype, artist, title, requester) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            .bind(&song.uuid)
-            .bind(&song.song)
-            .bind(&song.cover_url)
-            .bind(&song.song_id)
-            .bind(&song.playertype)
-            .bind(song.artist.as_deref())
-            .bind(song.title.as_deref())
-            .bind(song.requester.as_deref())
+            ::query("REPLACE INTO song_data (UUID, song, cover_url, song_id) VALUES (?, ?, ?, ?)")
+            .bind(song.uuid)
+            .bind(song.song)
+            .bind(song.cover_url)
+            .bind(song.song_id)
             .execute(pool).await;
 
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                println!("❌ SQL Error: {}", e); // Log any SQL error
-                Err(e)
-            }
+        if let Err(e) = result {
+            println!("Error: {}", e);
         }
+
+        Ok(())
     }
 
     pub async fn get_song(param: QueueParam, pool: &Pool<MySql>) -> Result<Self, sqlx::Error> {
@@ -326,10 +308,6 @@ impl Song {
                     song: "No song found".to_string(),
                     cover_url: String::new(),
                     song_id: None,
-                    playertype: None,
-                    artist: None,
-                    title: None,
-                    requester: None,
                 }),
         }
     }
@@ -653,12 +631,8 @@ async fn set_song(
         song: data.song,
         cover_url: cover,
         song_id: data.song_id,
-        playertype: data.playertype,
-        artist: data.artist,
-        title: data.title,
-        requester: data.requester,
     };
-    
+
     verify_access_key(&song.uuid, &data.key, pool).await?;
     Song::set_song(song, pool).await.map_or(Err(Status::InternalServerError), |_| Ok(()))
 }
