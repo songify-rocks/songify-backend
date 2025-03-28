@@ -1,30 +1,29 @@
 #[macro_use]
 extern crate serde_json;
 
-use std::{ env, error::Error, fmt };
-
-use rocket::{
-    fairing::{ Fairing, Info },
-    form::FromForm,
-    get,
-    patch,
-    post,
-    routes,
-    http::Status,
-    request::Request,
-    response::{ Responder, content::RawText },
-    serde::{ json::Json, Deserialize, Serialize },
-    State,
-};
-
-use rocket::serde::json::{ json, Value };
-
-use serde_json::{ json as serde_json_macro, Value as SerdeJsonValue };
+use std::env;
+use rocket::form::FromForm;
 
 use reqwest::Client;
 use scraper::{ Html, Selector };
+use std::error::Error;
+
+use rocket::{
+    get,
+    post,
+    routes,
+    serde::{ json::Json, Deserialize, Serialize },
+    State,
+    patch,
+    http::Status,
+    fairing::{ Fairing, Info },
+};
+use serde_json::Value; // Import Value from serde_json
+use serde_json::json; // Import the json! macro
 
 use sqlx::{ mysql::MySqlPoolOptions, FromRow, MySql, Pool, Row };
+
+use std::fmt;
 
 #[derive(Debug)]
 struct ValidationError {
@@ -523,22 +522,8 @@ async fn verify_access_key(
     Ok(())
 }
 
-enum SongResponse {
-    Json(Json<Value>),
-    Plain(RawText<String>),
-}
-
-impl<'r> Responder<'r, 'static> for SongResponse {
-    fn respond_to(self, req: &'r Request<'_>) -> rocket::response::Result<'static> {
-        match self {
-            SongResponse::Json(json) => json.respond_to(req),
-            SongResponse::Plain(text) => text.respond_to(req),
-        }
-    }
-}
-
 #[get("/getsong?<params..>")]
-async fn get_song(pool: &State<Pool<MySql>>, params: QueueParams) -> Result<SongResponse, Status> {
+async fn get_song(pool: &State<Pool<MySql>>, params: QueueParams) -> Result<Json<Value>, Status> {
     let param = if let Some(uuid) = params.uuid {
         QueueParam::Id(uuid)
     } else if let Some(name) = params.name {
@@ -549,10 +534,11 @@ async fn get_song(pool: &State<Pool<MySql>>, params: QueueParams) -> Result<Song
 
     let song = Song::get_song(param, pool).await.map_err(|_| Status::InternalServerError)?;
 
+    // Check the "full" parameter; if true, return the full object
     if params.full.unwrap_or(false) {
-        Ok(SongResponse::Json(Json(json!(song))))
+        Ok(Json(json!(song))) // Return the full song object as JSON
     } else {
-        Ok(SongResponse::Plain(RawText(song.song)))
+        Ok(content::Plain(song.song))
     }
 }
 
